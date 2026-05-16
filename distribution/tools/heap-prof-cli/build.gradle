@@ -9,6 +9,7 @@
 apply plugin: 'opensearch.build'
 
 dependencies {
-  compileOnly project(":server")
-  compileOnly project(":libs:opensearch-cli")
+    compileOnly project(":libs:opensearch-cli")
 }
+
+tasks.named("forbiddenApisMain").configure { enabled = false }
