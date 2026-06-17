@@ -167,4 +167,17 @@ public interface SearchBackEndPlugin<R> {
     default @Nullable Supplier<AnalyticsBackendNativeMemoryStats> getAnalyticsBackendNativeMemoryStats() {
         return null;
     }
+
+    /**
+     * Returns a supplier for native hot threads text, or {@code null} if not available.
+     * <p>
+     * The server calls this supplier on {@code _nodes/hot_threads} requests with
+     * {@code type=native} or {@code type=all} to capture stack traces of native
+     * (Rust/Tokio/Rayon) threads from the execution engine.
+     *
+     * @return a supplier of native hot threads text, or null
+     */
+    default @Nullable Supplier<String> getNativeHotThreads() {
+        return null;
+    }
 }

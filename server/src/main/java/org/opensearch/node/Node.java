@@ -43,6 +43,7 @@ import org.opensearch.Version;
 import org.opensearch.action.ActionModule;
 import org.opensearch.action.ActionModule.DynamicActionRegistry;
 import org.opensearch.action.ActionType;
+import org.opensearch.action.admin.cluster.node.hotthreads.TransportNodesHotThreadsAction;
 import org.opensearch.action.admin.cluster.snapshots.status.TransportNodesSnapshotsStatus;
 import org.opensearch.action.admin.indices.view.ViewService;
 import org.opensearch.action.search.SearchExecutionStatsCollector;
@@ -1263,6 +1264,16 @@ public class Node implements Closeable {
                 .filter(Objects::nonNull)
                 .findFirst()
                 .ifPresent(supplier -> monitorService.memoryReportingService().setNativeStatsSupplier(supplier));
+
+            pluginsService.filterPlugins(SearchBackEndPlugin.class)
+                .stream()
+                .map(SearchBackEndPlugin::getNativeHotThreads)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .ifPresent(supplier -> {
+                    TransportNodesHotThreadsAction hotThreadsAction = injector.getInstance(TransportNodesHotThreadsAction.class);
+                    hotThreadsAction.setNativeHotThreadsSupplier(supplier);
+                });
 
             List<SearchStatsContributor> searchStatsContributors = pluginsService.filterPlugins(SearchStatsContributor.class);
             if (searchStatsContributors.isEmpty() == false) {

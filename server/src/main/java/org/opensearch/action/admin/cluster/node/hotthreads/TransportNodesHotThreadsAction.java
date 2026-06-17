@@ -32,6 +32,8 @@
 
 package org.opensearch.action.admin.cluster.node.hotthreads;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.opensearch.OpenSearchException;
 import org.opensearch.action.FailedNodeException;
 import org.opensearch.action.support.ActionFilters;
@@ -47,6 +49,7 @@ import org.opensearch.transport.TransportService;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Transport action for OpenSearch Hot Threads
@@ -58,6 +61,10 @@ public class TransportNodesHotThreadsAction extends TransportNodesAction<
     NodesHotThreadsResponse,
     TransportNodesHotThreadsAction.NodeRequest,
     NodeHotThreads> {
+
+    private static final Logger logger = LogManager.getLogger(TransportNodesHotThreadsAction.class);
+
+    private volatile Supplier<String> nativeHotThreadsSupplier;
 
     @Inject
     public TransportNodesHotThreadsAction(
@@ -77,6 +84,14 @@ public class TransportNodesHotThreadsAction extends TransportNodesAction<
             ThreadPool.Names.GENERIC,
             NodeHotThreads.class
         );
+    }
+
+    /**
+     * Sets the native hot threads supplier from the analytics backend plugin.
+     * Called during node initialization when the plugin registers its capabilities.
+     */
+    public void setNativeHotThreadsSupplier(Supplier<String> supplier) {
+        this.nativeHotThreadsSupplier = supplier;
     }
 
     @Override
@@ -100,16 +115,49 @@ public class TransportNodesHotThreadsAction extends TransportNodesAction<
 
     @Override
     protected NodeHotThreads nodeOperation(NodeRequest request) {
-        HotThreads hotThreads = new HotThreads().busiestThreads(request.request.threads)
-            .type(request.request.type)
-            .interval(request.request.interval)
-            .threadElementsSnapshotCount(request.request.snapshots)
-            .ignoreIdleThreads(request.request.ignoreIdleThreads);
-        try {
-            return new NodeHotThreads(clusterService.localNode(), hotThreads.detect());
-        } catch (Exception e) {
-            throw new OpenSearchException("failed to detect hot threads", e);
+        String type = request.request.type;
+        StringBuilder result = new StringBuilder();
+
+        // Capture JVM hot threads (unless type is "native" only)
+        if (!"native".equals(type)) {
+            HotThreads hotThreads = new HotThreads().busiestThreads(request.request.threads)
+                .type(type.equals("all") ? "cpu" : type)
+                .interval(request.request.interval)
+                .threadElementsSnapshotCount(request.request.snapshots)
+                .ignoreIdleThreads(request.request.ignoreIdleThreads);
+            try {
+                result.append(hotThreads.detect());
+            } catch (Exception e) {
+                throw new OpenSearchException("failed to detect hot threads", e);
+            }
         }
+
+        // Capture native hot threads (when type is "native" or "all")
+        if ("native".equals(type) || "all".equals(type)) {
+            Supplier<String> supplier = nativeHotThreadsSupplier;
+            if (supplier != null) {
+                try {
+                    String nativeThreads = supplier.get();
+                    if (nativeThreads != null && !nativeThreads.isEmpty()) {
+                        if (result.length() > 0) {
+                            result.append("\n\n");
+                        }
+                        result.append("--- Native Threads (Rust/Tokio/DataFusion) ---\n");
+                        result.append(nativeThreads);
+                    }
+                } catch (Exception e) {
+                    logger.warn("Failed to capture native hot threads", e);
+                    if (result.length() > 0) {
+                        result.append("\n\n");
+                    }
+                    result.append("--- Native Threads (error: ").append(e.getMessage()).append(") ---\n");
+                }
+            } else if ("native".equals(type)) {
+                result.append("Native hot threads not available (no analytics backend plugin loaded)\n");
+            }
+        }
+
+        return new NodeHotThreads(clusterService.localNode(), result.toString());
     }
 
     /**
